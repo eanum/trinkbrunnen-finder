@@ -95,7 +95,7 @@
     <label>Umkreis (km)
       <input type="number" id="nearbyRadius" value="10" min="1" max="50" step="1">
     </label>
-    <button id="nearbyBtn">🚰 In meiner Nähe</button>
+    <button id="nearbyBtn">🚰 Umkreissuche</button>
     <button id="locateBtn">📍 Mein Standort</button>
   </div>
   <div id="status"></div>
@@ -252,7 +252,7 @@
     clearBtn.disabled = true;
     liveInfoEl.classList.remove('visible');
     localStorage.removeItem(STORAGE_KEY);
-    setStatus('Route und Brunnen-Daten gelöscht. Lade eine GPX-Datei oder nutze "In meiner Nähe".');
+    setStatus('Route und Brunnen-Daten gelöscht. Lade eine GPX-Datei oder nutze "Umkreissuche".');
   }
 
   clearBtn.addEventListener('click', clearRoute);
@@ -529,7 +529,7 @@ ${trkpts}
   function updateLiveInfo(lat, lon) {
     const coordsLine = `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
     if (!searchPerformed) {
-      liveInfoEl.innerHTML = `Noch keine Brunnen-Suche gemacht — "Brunnen im Track suchen" oder "In meiner Nähe" nutzen.<div class="coords">${coordsLine}</div>`;
+      liveInfoEl.innerHTML = `Noch keine Brunnen-Suche gemacht — "Brunnen im Track suchen" oder "Umkreissuche" nutzen.<div class="coords">${coordsLine}</div>`;
       return;
     }
     if (foundFountains.length === 0) {
@@ -576,7 +576,7 @@ ${trkpts}
 
   // --- Start ---
   if (!loadState()) {
-    setStatus('Willkommen! Entweder oben "GPX laden" für eine Tour, oder direkt "🚰 In meiner Nähe" für eine Umkreis-Suche ohne Route.');
+    setStatus('Willkommen! Entweder oben "GPX laden" für eine Tour, oder direkt "🚰 Umkreissuche" ohne geladene Route.');
   }
 
   if ('serviceWorker' in navigator) {
