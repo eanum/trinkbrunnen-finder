@@ -379,6 +379,19 @@
 
   searchBtn.addEventListener('click', searchFountains);
 
+  function describeGeoError(err) {
+    if (err.code === 1) { // PERMISSION_DENIED
+      return 'Standortzugriff verweigert. iPhone: Einstellungen > Safari > Standort (oder "aA" in der Adressleiste > Website-Einstellungen). Android Chrome: Symbol/Schloss in der Adressleiste > Berechtigungen > Standort. Danach Seite neu laden.';
+    }
+    if (err.code === 2) { // POSITION_UNAVAILABLE
+      return 'Standort gerade nicht ermittelbar (z.B. kein GPS-Signal). Nochmal versuchen.';
+    }
+    if (err.code === 3) { // TIMEOUT
+      return 'Standortabfrage hat zu lange gedauert. Nochmal versuchen.';
+    }
+    return err.message;
+  }
+
   // --- Umkreis-Suche um den aktuellen Standort, ganz ohne geladene Route ---
   function getCurrentLatLon() {
     if (userMarker) {
@@ -389,7 +402,7 @@
       if (!navigator.geolocation) { reject(new Error('Geolocation wird nicht unterstützt.')); return; }
       navigator.geolocation.getCurrentPosition(
         (pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
-        (err) => reject(new Error('Standort nicht verfügbar: ' + err.message)),
+        (err) => reject(new Error(describeGeoError(err))),
         { enableHighAccuracy: true, timeout: 15000 }
       );
     });
@@ -556,7 +569,7 @@ ${trkpts}
         }
         updateLiveInfo(latitude, longitude);
       },
-      (err) => setStatus('Standortfehler: ' + err.message),
+      (err) => setStatus('Standortfehler: ' + describeGeoError(err)),
       { enableHighAccuracy: true, maximumAge: 5000 }
     );
   });
