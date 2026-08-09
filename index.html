@@ -86,6 +86,7 @@
       <input type="number" id="radius" value="400" min="50" max="2000" step="50">
     </label>
     <button id="searchBtn" disabled>Brunnen suchen</button>
+    <button id="exportBtn" disabled>⬇️ GPX mit Brunnen</button>
     <button id="locateBtn">📍 Mein Standort</button>
   </div>
   <div id="status"></div>
@@ -98,6 +99,7 @@
   const statusEl = document.getElementById('status');
   const liveInfoEl = document.getElementById('liveInfo');
   const searchBtn = document.getElementById('searchBtn');
+  const exportBtn = document.getElementById('exportBtn');
   const gpxInput = document.getElementById('gpxInput');
   const radiusInput = document.getElementById('radius');
   const locateBtn = document.getElementById('locateBtn');
@@ -195,6 +197,7 @@
       if (state.fountains && state.fountains.length > 0) {
         foundFountains = state.fountains;
         renderFountainMarkers(foundFountains);
+        exportBtn.disabled = false;
       }
       searchBtn.disabled = false;
       const savedDate = state.savedAt ? new Date(state.savedAt).toLocaleString('de-DE') : '';
@@ -242,6 +245,7 @@
       currentFileName = file.name;
       foundFountains = [];
       fountainLayer.clearLayers();
+      exportBtn.disabled = true;
       drawRoute();
 
       searchBtn.disabled = false;
@@ -311,6 +315,7 @@
       renderFountainMarkers(foundFountains);
 
       setStatus(`${nodes.length} Brunnen in der Bounding Box, ${foundFountains.length} davon im ${radius}m-Korridor um die Route. Für die Fahrt gespeichert — funktioniert jetzt auch offline.`);
+      exportBtn.disabled = foundFountains.length === 0;
       saveState();
     } catch (err) {
       setStatus('Fehler bei der Suche: ' + err.message + (foundFountains.length ? ' (alte Brunnen-Daten bleiben erhalten)' : ''));
@@ -320,6 +325,52 @@
   }
 
   searchBtn.addEventListener('click', searchFountains);
+
+  // --- GPX-Export mit Brunnen als Wegpunkte (z.B. für Wahoo/Garmin-Kurs-POIs) ---
+  function escapeXML(s) {
+    return String(s).replace(/[&<>"']/g, c => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;'
+    })[c]);
+  }
+
+  function buildGPX() {
+    const trkpts = trackPoints.map(p => `      <trkpt lat="${p.lat}" lon="${p.lon}"></trkpt>`).join('\n');
+    const wpts = foundFountains.map(f => `  <wpt lat="${f.lat}" lon="${f.lon}">
+    <name>${escapeXML(f.name)}</name>
+    <sym>Water Source</sym>
+    <type>Water</type>
+  </wpt>`).join('\n');
+
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Trinkbrunnen-Finder" xmlns="http://www.topografix.com/GPX/1/1">
+${wpts}
+  <trk>
+    <name>${escapeXML(currentFileName || 'Route')} (mit Trinkbrunnen)</name>
+    <trkseg>
+${trkpts}
+    </trkseg>
+  </trk>
+</gpx>
+`;
+  }
+
+  function exportGPX() {
+    if (trackPoints.length === 0 || foundFountains.length === 0) return;
+    const gpxText = buildGPX();
+    const blob = new Blob([gpxText], { type: 'application/gpx+xml' });
+    const url = URL.createObjectURL(blob);
+    const base = (currentFileName || 'route').replace(/\.gpx$/i, '');
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${base}_mit_brunnen.gpx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setStatus(`GPX mit ${foundFountains.length} Brunnen-Wegpunkten exportiert: ${a.download}`);
+  }
+
+  exportBtn.addEventListener('click', exportGPX);
 
   // --- Live-Standort ---
   function nearestFountain(lat, lon) {
