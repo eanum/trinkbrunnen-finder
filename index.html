@@ -26,6 +26,7 @@
     white-space: nowrap;
   }
   #controls label { font-size: 12px; display: flex; align-items: center; gap: 4px; }
+  #controls .sep { width: 1px; align-self: stretch; background: rgba(255,255,255,0.2); margin: 0 2px; }
   #controls input[type=number] { width: 55px; padding: 4px; border-radius: 4px; border: none; }
   #controls button, #controls .filebtn {
     background: #2e7d5b;
@@ -87,6 +88,11 @@
     </label>
     <button id="searchBtn" disabled>Brunnen suchen</button>
     <button id="exportBtn" disabled>⬇️ GPX mit Brunnen</button>
+    <span class="sep"></span>
+    <label>Umkreis (km)
+      <input type="number" id="nearbyRadius" value="10" min="1" max="50" step="1">
+    </label>
+    <button id="nearbyBtn">🚰 In meiner Nähe</button>
     <button id="locateBtn">📍 Mein Standort</button>
   </div>
   <div id="status"></div>
@@ -102,6 +108,8 @@
   const exportBtn = document.getElementById('exportBtn');
   const gpxInput = document.getElementById('gpxInput');
   const radiusInput = document.getElementById('radius');
+  const nearbyBtn = document.getElementById('nearbyBtn');
+  const nearbyRadiusInput = document.getElementById('nearbyRadius');
   const locateBtn = document.getElementById('locateBtn');
 
   function setStatus(msg) { statusEl.textContent = msg; }
@@ -171,10 +179,12 @@
   // --- Persistenz (localStorage), damit Track + Brunnen einen Reload ohne Netz überstehen ---
   const STORAGE_KEY = 'trinkbrunnen_state_v1';
 
+  let fountainsFromRoute = false; // true nur nach Korridor-Suche entlang einer Route (relevant für den GPX-Export)
+
   function saveState() {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        trackPoints, fountains: foundFountains,
+        trackPoints, fountains: foundFountains, fountainsFromRoute,
         radius: parseFloat(radiusInput.value) || 400,
         fileName: currentFileName, savedAt: new Date().toISOString()
       }));
@@ -188,20 +198,28 @@
     if (!raw) return false;
     try {
       const state = JSON.parse(raw);
-      if (!state.trackPoints || state.trackPoints.length === 0) return false;
-      trackPoints = state.trackPoints;
-      sampledPoints = downsample(trackPoints, 40);
-      currentFileName = state.fileName || null;
-      drawRoute();
+      const hasTrack = state.trackPoints && state.trackPoints.length > 0;
+      const hasFountains = state.fountains && state.fountains.length > 0;
+      if (!hasTrack && !hasFountains) return false;
+
+      if (hasTrack) {
+        trackPoints = state.trackPoints;
+        sampledPoints = downsample(trackPoints, 40);
+        currentFileName = state.fileName || null;
+        drawRoute();
+        searchBtn.disabled = false;
+      }
       if (state.radius) radiusInput.value = state.radius;
-      if (state.fountains && state.fountains.length > 0) {
+      if (hasFountains) {
         foundFountains = state.fountains;
         renderFountainMarkers(foundFountains);
-        exportBtn.disabled = false;
+        fountainsFromRoute = !!state.fountainsFromRoute;
+        exportBtn.disabled = !(hasTrack && fountainsFromRoute);
+        if (!hasTrack) map.fitBounds(L.latLngBounds(foundFountains.map(f => [f.lat, f.lon])), { padding: [30, 30] });
       }
-      searchBtn.disabled = false;
       const savedDate = state.savedAt ? new Date(state.savedAt).toLocaleString('de-DE') : '';
-      setStatus(`Gespeicherter Track wiederhergestellt (${currentFileName || 'ohne Namen'}, ${trackPoints.length} Punkte, gespeichert ${savedDate}). Funktioniert offline.`);
+      const label = hasTrack ? (currentFileName || 'ohne Namen') : 'Umkreis-Suche';
+      setStatus(`Gespeicherter Zustand wiederhergestellt (${label}, gespeichert ${savedDate}). Funktioniert offline.`);
       return true;
     } catch (err) {
       console.warn('Konnte gespeicherten Zustand nicht laden:', err);
@@ -244,6 +262,7 @@
       sampledPoints = downsample(trackPoints, 40); // alle ~40m ein Referenzpunkt
       currentFileName = file.name;
       foundFountains = [];
+      fountainsFromRoute = false;
       fountainLayer.clearLayers();
       exportBtn.disabled = true;
       drawRoute();
@@ -315,6 +334,7 @@
       renderFountainMarkers(foundFountains);
 
       setStatus(`${nodes.length} Brunnen in der Bounding Box, ${foundFountains.length} davon im ${radius}m-Korridor um die Route. Für die Fahrt gespeichert — funktioniert jetzt auch offline.`);
+      fountainsFromRoute = true;
       exportBtn.disabled = foundFountains.length === 0;
       saveState();
     } catch (err) {
@@ -325,6 +345,68 @@
   }
 
   searchBtn.addEventListener('click', searchFountains);
+
+  // --- Umkreis-Suche um den aktuellen Standort, ganz ohne geladene Route ---
+  function getCurrentLatLon() {
+    if (userMarker) {
+      const ll = userMarker.getLatLng();
+      return Promise.resolve({ lat: ll.lat, lon: ll.lng });
+    }
+    return new Promise((resolve, reject) => {
+      if (!navigator.geolocation) { reject(new Error('Geolocation wird nicht unterstützt.')); return; }
+      navigator.geolocation.getCurrentPosition(
+        (pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
+        (err) => reject(new Error('Standort nicht verfügbar: ' + err.message)),
+        { enableHighAccuracy: true, timeout: 15000 }
+      );
+    });
+  }
+
+  async function searchNearby() {
+    nearbyBtn.disabled = true;
+    setStatus('Ermittle Standort…');
+    try {
+      const { lat, lon } = await getCurrentLatLon();
+      if (!userMarker) {
+        userMarker = L.circleMarker([lat, lon], {
+          radius: 8, color: '#fff', weight: 2, fillColor: '#e53935', fillOpacity: 1
+        }).addTo(map);
+      }
+
+      const radiusKm = parseFloat(nearbyRadiusInput.value) || 10;
+      const radiusM = Math.round(radiusKm * 1000);
+      const query = `[out:json][timeout:25];
+        node["amenity"="drinking_water"](around:${radiusM},${lat},${lon});
+        out body;`;
+
+      const data = await fetchOverpass(query);
+      const nodes = data.elements || [];
+      foundFountains = nodes.map(n => ({
+        lat: n.lat, lon: n.lon, id: n.id,
+        name: (n.tags && (n.tags.name || n.tags.description)) || 'Trinkbrunnen'
+      }));
+      fountainsFromRoute = false;
+      exportBtn.disabled = true; // diese Brunnen gehören zu keiner geladenen Route
+      renderFountainMarkers(foundFountains);
+
+      if (foundFountains.length > 0) {
+        map.fitBounds(L.latLngBounds(foundFountains.map(f => [f.lat, f.lon]).concat([[lat, lon]])), { padding: [30, 30] });
+      } else {
+        map.setView([lat, lon], 12);
+      }
+
+      setStatus(`${foundFountains.length} Brunnen im ${radiusKm} km Umkreis um deinen Standort gefunden.`);
+      liveInfoEl.classList.add('visible');
+      updateLiveInfo(lat, lon);
+      saveState();
+    } catch (err) {
+      setStatus('Fehler bei der Umkreis-Suche: ' + err.message);
+    } finally {
+      nearbyBtn.disabled = false;
+    }
+  }
+
+  nearbyBtn.addEventListener('click', searchNearby);
 
   // --- GPX-Export mit Brunnen als Wegpunkte (z.B. für Wahoo/Garmin-Kurs-POIs) ---
   function escapeXML(s) {
