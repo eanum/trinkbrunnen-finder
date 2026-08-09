@@ -85,11 +85,12 @@
       GPX laden
       <input type="file" id="gpxInput" accept=".gpx" />
     </label>
+    <button id="searchBtn" disabled title="Erst eine GPX-Datei laden">Brunnen im Track suchen</button>
     <label>Korridor (m)
       <input type="number" id="radius" value="400" min="50" max="2000" step="50">
     </label>
-    <button id="searchBtn" disabled>Brunnen suchen</button>
-    <button id="exportBtn" disabled>⬇️ GPX mit Brunnen</button>
+    <button id="exportBtn" disabled title="Erst Brunnen entlang der Route suchen">⬇️ GPX mit Brunnen</button>
+    <button id="clearBtn" disabled title="Geladene Route und Brunnen-Daten zurücksetzen">🗑️ GPX löschen</button>
     <span class="sep"></span>
     <label>Umkreis (km)
       <input type="number" id="nearbyRadius" value="10" min="1" max="50" step="1">
@@ -108,6 +109,7 @@
   const liveInfoEl = document.getElementById('liveInfo');
   const searchBtn = document.getElementById('searchBtn');
   const exportBtn = document.getElementById('exportBtn');
+  const clearBtn = document.getElementById('clearBtn');
   const gpxInput = document.getElementById('gpxInput');
   const radiusInput = document.getElementById('radius');
   const nearbyBtn = document.getElementById('nearbyBtn');
@@ -127,6 +129,8 @@
   let routeLayer = null;
   let fountainLayer = L.layerGroup().addTo(map);
   let foundFountains = []; // [{lat, lon, name, id}] aus der letzten Suche
+  let searchRadiusCircle = null; // zeigt den durchsuchten Umkreis bei der Nähe-Suche
+  let searchPerformed = false; // unterscheidet "noch nicht gesucht" von "gesucht, 0 Treffer"
   let userMarker = null;
   let watchId = null;
 
@@ -216,9 +220,11 @@
         foundFountains = state.fountains;
         renderFountainMarkers(foundFountains);
         fountainsFromRoute = !!state.fountainsFromRoute;
+        searchPerformed = true;
         exportBtn.disabled = !(hasTrack && fountainsFromRoute);
         if (!hasTrack) map.fitBounds(L.latLngBounds(foundFountains.map(f => [f.lat, f.lon])), { padding: [30, 30] });
       }
+      clearBtn.disabled = false;
       const savedDate = state.savedAt ? new Date(state.savedAt).toLocaleString('de-DE') : '';
       const label = hasTrack ? (currentFileName || 'ohne Namen') : 'Umkreis-Suche';
       setStatus(`Gespeicherter Zustand wiederhergestellt (${label}, gespeichert ${savedDate}). Funktioniert offline.`);
@@ -228,6 +234,28 @@
       return false;
     }
   }
+
+  function clearRoute() {
+    if (!confirm('Route und gespeicherte Brunnen-Daten wirklich löschen?')) return;
+    trackPoints = [];
+    sampledPoints = [];
+    foundFountains = [];
+    fountainsFromRoute = false;
+    searchPerformed = false;
+    currentFileName = null;
+    if (routeLayer) { map.removeLayer(routeLayer); routeLayer = null; }
+    if (searchRadiusCircle) { map.removeLayer(searchRadiusCircle); searchRadiusCircle = null; }
+    fountainLayer.clearLayers();
+    gpxInput.value = '';
+    searchBtn.disabled = true;
+    exportBtn.disabled = true;
+    clearBtn.disabled = true;
+    liveInfoEl.classList.remove('visible');
+    localStorage.removeItem(STORAGE_KEY);
+    setStatus('Route und Brunnen-Daten gelöscht. Lade eine GPX-Datei oder nutze "In meiner Nähe".');
+  }
+
+  clearBtn.addEventListener('click', clearRoute);
 
   function drawRoute() {
     if (routeLayer) map.removeLayer(routeLayer);
@@ -265,12 +293,14 @@
       currentFileName = file.name;
       foundFountains = [];
       fountainsFromRoute = false;
+      searchPerformed = false;
       fountainLayer.clearLayers();
       exportBtn.disabled = true;
       drawRoute();
 
       searchBtn.disabled = false;
-      setStatus(`Track geladen: ${trackPoints.length} Punkte, ${sampledPoints.length} Stützpunkte für Korridor-Suche.`);
+      clearBtn.disabled = false;
+      setStatus(`Track geladen: ${trackPoints.length} Punkte, ${sampledPoints.length} Stützpunkte für Korridor-Suche. Jetzt auf "Brunnen im Track suchen" tippen.`);
       saveState();
     } catch (err) {
       setStatus('Fehler beim Einlesen: ' + err.message);
@@ -337,6 +367,7 @@
 
       setStatus(`${nodes.length} Brunnen in der Bounding Box, ${foundFountains.length} davon im ${radius}m-Korridor um die Route. Für die Fahrt gespeichert — funktioniert jetzt auch offline.`);
       fountainsFromRoute = true;
+      searchPerformed = true;
       exportBtn.disabled = foundFountains.length === 0;
       saveState();
     } catch (err) {
@@ -388,16 +419,27 @@
         name: (n.tags && (n.tags.name || n.tags.description)) || 'Trinkbrunnen'
       }));
       fountainsFromRoute = false;
+      searchPerformed = true;
       exportBtn.disabled = true; // diese Brunnen gehören zu keiner geladenen Route
+      clearBtn.disabled = false;
       renderFountainMarkers(foundFountains);
+
+      if (searchRadiusCircle) map.removeLayer(searchRadiusCircle);
+      searchRadiusCircle = L.circle([lat, lon], {
+        radius: radiusM, color: '#1e88e5', weight: 2, dashArray: '6 6', fill: false
+      }).addTo(map);
 
       if (foundFountains.length > 0) {
         map.fitBounds(L.latLngBounds(foundFountains.map(f => [f.lat, f.lon]).concat([[lat, lon]])), { padding: [30, 30] });
       } else {
-        map.setView([lat, lon], 12);
+        map.fitBounds(searchRadiusCircle.getBounds(), { padding: [30, 30] });
       }
 
-      setStatus(`${foundFountains.length} Brunnen im ${radiusKm} km Umkreis um deinen Standort gefunden.`);
+      if (foundFountains.length === 0) {
+        setStatus(`Kein Trinkbrunnen im ${radiusKm} km Umkreis gefunden (OSM-Daten können lückenhaft sein — der blaue Kreis zeigt den durchsuchten Bereich). Größeren Umkreis probieren?`);
+      } else {
+        setStatus(`${foundFountains.length} Brunnen im ${radiusKm} km Umkreis um deinen Standort gefunden.`);
+      }
       liveInfoEl.classList.add('visible');
       updateLiveInfo(lat, lon);
       saveState();
@@ -473,8 +515,12 @@ ${trkpts}
 
   function updateLiveInfo(lat, lon) {
     const coordsLine = `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+    if (!searchPerformed) {
+      liveInfoEl.innerHTML = `Noch keine Brunnen-Suche gemacht — "Brunnen im Track suchen" oder "In meiner Nähe" nutzen.<div class="coords">${coordsLine}</div>`;
+      return;
+    }
     if (foundFountains.length === 0) {
-      liveInfoEl.innerHTML = `Kein Brunnen-Datensatz geladen — erst "Brunnen suchen" ausführen.<div class="coords">${coordsLine}</div>`;
+      liveInfoEl.innerHTML = `Kein Brunnen im zuletzt durchsuchten Bereich bekannt.<div class="coords">${coordsLine}</div>`;
       return;
     }
     const nearest = nearestFountain(lat, lon);
@@ -516,7 +562,9 @@ ${trkpts}
   });
 
   // --- Start ---
-  loadState();
+  if (!loadState()) {
+    setStatus('Willkommen! Entweder oben "GPX laden" für eine Tour, oder direkt "🚰 In meiner Nähe" für eine Umkreis-Suche ohne Route.');
+  }
 
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(err => {

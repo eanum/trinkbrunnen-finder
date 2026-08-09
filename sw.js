@@ -1,4 +1,4 @@
-const CACHE_NAME = 'trinkbrunnen-v8';
+const CACHE_NAME = 'trinkbrunnen-v9';
 const APP_SHELL = [
   './',
   './index.html',
