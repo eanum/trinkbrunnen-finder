@@ -28,7 +28,7 @@
     white-space: nowrap;
   }
   #controls label { font-size: 12px; display: flex; align-items: center; gap: 4px; }
-  #controls .sep { width: 1px; align-self: stretch; background: rgba(255,255,255,0.2); margin: 0 2px; }
+  #controls .sep { width: 1px; align-self: stretch; background: rgba(255,255,255,0.2); margin: 0 16px; }
   #controls input[type=number] { width: 55px; padding: 4px; border-radius: 4px; border: none; }
   #controls button, #controls .filebtn {
     background: #2e7d5b;
@@ -85,12 +85,12 @@
       GPX laden
       <input type="file" id="gpxInput" accept=".gpx" />
     </label>
+    <button id="clearBtn" disabled title="Geladene Route und Brunnen-Daten zurücksetzen">🗑️ GPX löschen</button>
     <button id="searchBtn" disabled title="Erst eine GPX-Datei laden">Brunnen im Track suchen</button>
     <label>Korridor (m)
       <input type="number" id="radius" value="400" min="50" max="2000" step="50">
     </label>
     <button id="exportBtn" disabled title="Erst Brunnen entlang der Route suchen">⬇️ GPX mit Brunnen</button>
-    <button id="clearBtn" disabled title="Geladene Route und Brunnen-Daten zurücksetzen">🗑️ GPX löschen</button>
     <span class="sep"></span>
     <label>Umkreis (km)
       <input type="number" id="nearbyRadius" value="10" min="1" max="50" step="1">

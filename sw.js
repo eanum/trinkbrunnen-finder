@@ -1,4 +1,4 @@
-const CACHE_NAME = 'trinkbrunnen-v9';
+const CACHE_NAME = 'trinkbrunnen-v10';
 const APP_SHELL = [
   './',
   './index.html',
@@ -50,8 +50,25 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  const isPage = event.request.mode === 'navigate' ||
+    (event.request.method === 'GET' && url.origin === self.location.origin &&
+      (url.pathname.endsWith('/') || url.pathname.endsWith('index.html')));
+
+  if (isPage) {
+    // Die Seite selbst: erst Netz (damit Updates sofort ankommen), Cache nur als Offline-Fallback.
+    event.respondWith(
+      fetch(event.request)
+        .then((resp) => {
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, resp.clone()));
+          return resp;
+        })
+        .catch(() => caches.match(event.request))
+    );
+    return;
+  }
+
   if (event.request.method === 'GET' && url.origin === self.location.origin) {
-    // App-Shell: aus dem Cache, damit die Seite auch ohne Netz startet.
+    // Statische Assets (Leaflet, Manifest): ändern sich selten, cache-first reicht.
     event.respondWith(
       caches.match(event.request).then((cached) => cached || fetch(event.request))
     );
