@@ -478,28 +478,49 @@
     })[c]);
   }
 
-  function nearestTrackPoint(lat, lon) {
-    let best = trackPoints[0];
+  function nearestTrackPointIndex(lat, lon) {
+    let bestIdx = 0;
     let bestDist = Infinity;
-    for (const p of trackPoints) {
-      const d = haversine(lat, lon, p.lat, p.lon);
-      if (d < bestDist) { bestDist = d; best = p; }
+    for (let i = 0; i < trackPoints.length; i++) {
+      const d = haversine(lat, lon, trackPoints[i].lat, trackPoints[i].lon);
+      if (d < bestDist) { bestDist = d; bestIdx = i; }
     }
-    return { point: best, dist: bestDist };
+    return { idx: bestIdx, dist: bestDist };
+  }
+
+  function trackCumulativeDistances() {
+    const cum = [0];
+    for (let i = 1; i < trackPoints.length; i++) {
+      cum.push(cum[i - 1] + haversine(trackPoints[i - 1].lat, trackPoints[i - 1].lon, trackPoints[i].lat, trackPoints[i].lon));
+    }
+    return cum;
   }
 
   function buildGPX() {
     const trkpts = trackPoints.map(p => `      <trkpt lat="${p.lat}" lon="${p.lon}"></trkpt>`).join('\n');
-    const wpts = foundFountains.map(f => {
-      // Wahoo-Geräte zeigen Wegpunkte laut Support-Doku nur an, wenn sie
-      // exakt auf dem Track liegen -> auf den nächsten Trackpunkt snappen,
-      // den echten Versatz aber im Namen vermerken.
-      const { point, dist } = nearestTrackPoint(f.lat, f.lon);
-      const label = dist >= 15
-        ? `${escapeXML(f.name)} (ca. ${formatDist(dist)} abseits der Route)`
-        : escapeXML(f.name);
-      return `  <wpt lat="${point.lat}" lon="${point.lon}">
-    <name>${label}</name>
+
+    // Wahoo-Geräte zeigen Wegpunkte laut Support-Doku nur an, wenn sie exakt
+    // auf dem Track liegen -> auf den nächsten Trackpunkt snappen. Zusätzlich
+    // pro Brunnen die Streckendistanz (nicht Luftlinie) zum nächsten Brunnen
+    // in Fahrtrichtung ausrechnen ("nächstes Wasser in Xkm", Tankstellen-Prinzip).
+    const cum = trackCumulativeDistances();
+    const enriched = foundFountains
+      .map(f => {
+        const { idx, dist } = nearestTrackPointIndex(f.lat, f.lon);
+        return { f, idx, dist, point: trackPoints[idx] };
+      })
+      .sort((a, b) => a.idx - b.idx);
+
+    const wpts = enriched.map((e, i) => {
+      const offsetLabel = e.dist >= 15 ? ` (ca. ${formatDist(e.dist)} abseits der Route)` : '';
+      let nextLabel = '';
+      if (i < enriched.length - 1) {
+        const distToNext = Math.abs(cum[enriched[i + 1].idx] - cum[e.idx]);
+        nextLabel = ` – nächstes Wasser in ${formatDist(distToNext)}`;
+      }
+      const name = `${escapeXML(e.f.name)}${offsetLabel}${nextLabel}`;
+      return `  <wpt lat="${e.point.lat}" lon="${e.point.lon}">
+    <name>${name}</name>
     <sym>Water Source</sym>
     <type>Water</type>
   </wpt>`;
