@@ -478,13 +478,32 @@
     })[c]);
   }
 
+  function nearestTrackPoint(lat, lon) {
+    let best = trackPoints[0];
+    let bestDist = Infinity;
+    for (const p of trackPoints) {
+      const d = haversine(lat, lon, p.lat, p.lon);
+      if (d < bestDist) { bestDist = d; best = p; }
+    }
+    return { point: best, dist: bestDist };
+  }
+
   function buildGPX() {
     const trkpts = trackPoints.map(p => `      <trkpt lat="${p.lat}" lon="${p.lon}"></trkpt>`).join('\n');
-    const wpts = foundFountains.map(f => `  <wpt lat="${f.lat}" lon="${f.lon}">
-    <name>${escapeXML(f.name)}</name>
+    const wpts = foundFountains.map(f => {
+      // Wahoo-Geräte zeigen Wegpunkte laut Support-Doku nur an, wenn sie
+      // exakt auf dem Track liegen -> auf den nächsten Trackpunkt snappen,
+      // den echten Versatz aber im Namen vermerken.
+      const { point, dist } = nearestTrackPoint(f.lat, f.lon);
+      const label = dist >= 15
+        ? `${escapeXML(f.name)} (ca. ${formatDist(dist)} abseits der Route)`
+        : escapeXML(f.name);
+      return `  <wpt lat="${point.lat}" lon="${point.lon}">
+    <name>${label}</name>
     <sym>Water Source</sym>
     <type>Water</type>
-  </wpt>`).join('\n');
+  </wpt>`;
+    }).join('\n');
 
     return `<?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="Trinkbrunnen-Finder" xmlns="http://www.topografix.com/GPX/1/1">
