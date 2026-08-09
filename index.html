@@ -517,6 +517,9 @@
       if (i < enriched.length - 1) {
         const distToNext = Math.abs(cum[enriched[i + 1].idx] - cum[e.idx]);
         nextLabel = ` – nächstes Wasser in ${formatDist(distToNext)}`;
+      } else {
+        const distToEnd = Math.abs(cum[cum.length - 1] - cum[e.idx]);
+        if (distToEnd >= 15) nextLabel = ` – noch ${formatDist(distToEnd)} bis ins Ziel`;
       }
       const name = `${escapeXML(e.f.name)}${offsetLabel}${nextLabel}`;
       return `  <wpt lat="${e.point.lat}" lon="${e.point.lon}">
