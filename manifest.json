@@ -1,0 +1,10 @@
+{
+  "name": "Trinkbrunnen-Finder",
+  "short_name": "Trinkbrunnen",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0f2620",
+  "theme_color": "#1b3a2f",
+  "icons": []
+}

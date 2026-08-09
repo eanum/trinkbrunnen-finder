@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Trinkbrunnen-Finder</title>
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css" />
+<link rel="manifest" href="manifest.json" />
+<meta name="theme-color" content="#1b3a2f" />
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  #app { display: flex; flex-direction: column; height: 100%; }
+  #controls {
+    padding: 10px 12px;
+    background: #1b3a2f;
+    color: #fff;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    z-index: 1000;
+  }
+  #controls h1 {
+    font-size: 15px;
+    margin: 0 8px 0 0;
+    white-space: nowrap;
+  }
+  #controls label { font-size: 12px; display: flex; align-items: center; gap: 4px; }
+  #controls input[type=number] { width: 55px; padding: 4px; border-radius: 4px; border: none; }
+  #controls button, #controls .filebtn {
+    background: #2e7d5b;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  #controls button:disabled { background: #4a6157; cursor: not-allowed; }
+  #controls input[type=file] { display: none; }
+  #status {
+    font-size: 12px;
+    padding: 4px 12px;
+    background: #0f2620;
+    color: #cfe9dc;
+    min-height: 16px;
+  }
+  #liveInfo {
+    display: none;
+    font-size: 18px;
+    font-weight: 600;
+    padding: 10px 12px;
+    background: #123c66;
+    color: #fff;
+    text-align: center;
+  }
+  #liveInfo.visible { display: block; }
+  #liveInfo .coords {
+    font-size: 11px;
+    font-weight: 400;
+    opacity: 0.75;
+    margin-top: 2px;
+  }
+  #map { flex: 1; }
+  .fountain-icon {
+    background: #1e88e5;
+    border: 2px solid #fff;
+    border-radius: 50%;
+    width: 14px;
+    height: 14px;
+    box-shadow: 0 0 3px rgba(0,0,0,0.5);
+  }
+  #locateBtn.active { background: #1e88e5; }
+  .leaflet-popup-content { font-size: 13px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="controls">
+    <h1>💧 Trinkbrunnen-Finder</h1>
+    <label class="filebtn">
+      GPX laden
+      <input type="file" id="gpxInput" accept=".gpx" />
+    </label>
+    <label>Korridor (m)
+      <input type="number" id="radius" value="400" min="50" max="2000" step="50">
+    </label>
+    <button id="searchBtn" disabled>Brunnen suchen</button>
+    <button id="locateBtn">📍 Mein Standort</button>
+  </div>
+  <div id="status"></div>
+  <div id="liveInfo"></div>
+  <div id="map"></div>
+</div>
+
+<script src="vendor/leaflet/leaflet.js"></script>
+<script>
+  const statusEl = document.getElementById('status');
+  const liveInfoEl = document.getElementById('liveInfo');
+  const searchBtn = document.getElementById('searchBtn');
+  const gpxInput = document.getElementById('gpxInput');
+  const radiusInput = document.getElementById('radius');
+  const locateBtn = document.getElementById('locateBtn');
+
+  function setStatus(msg) { statusEl.textContent = msg; }
+
+  const map = L.map('map').setView([50.7753, 6.0839], 13); // Aachen als Default
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>-Mitwirkende'
+  }).addTo(map);
+
+  let trackPoints = [];      // [{lat, lon}]
+  let sampledPoints = [];    // downsampled for distance checks
+  let routeLayer = null;
+  let fountainLayer = L.layerGroup().addTo(map);
+  let foundFountains = []; // [{lat, lon, name, id}] aus der letzten Suche
+  let userMarker = null;
+  let watchId = null;
+
+  // --- Geometrie-Helfer ---
+  function haversine(lat1, lon1, lat2, lon2) {
+    const R = 6371000;
+    const toRad = d => d * Math.PI / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+    return 2 * R * Math.asin(Math.sqrt(a));
+  }
+
+  // Downsample: nur Punkte behalten, die mind. minDist Meter vom letzten behaltenen entfernt sind
+  function downsample(points, minDist) {
+    if (points.length === 0) return [];
+    const out = [points[0]];
+    let last = points[0];
+    for (const p of points) {
+      if (haversine(last.lat, last.lon, p.lat, p.lon) >= minDist) {
+        out.push(p);
+        last = p;
+      }
+    }
+    out.push(points[points.length - 1]);
+    return out;
+  }
+
+  function minDistToRoute(lat, lon, samples) {
+    let min = Infinity;
+    for (const p of samples) {
+      const d = haversine(lat, lon, p.lat, p.lon);
+      if (d < min) min = d;
+    }
+    return min;
+  }
+
+  function parseGPX(text) {
+    const xml = new DOMParser().parseFromString(text, 'application/xml');
+    const err = xml.querySelector('parsererror');
+    if (err) throw new Error('GPX konnte nicht gelesen werden.');
+    const trkpts = xml.querySelectorAll('trkpt, rtept');
+    const pts = [];
+    trkpts.forEach(el => {
+      const lat = parseFloat(el.getAttribute('lat'));
+      const lon = parseFloat(el.getAttribute('lon'));
+      if (!isNaN(lat) && !isNaN(lon)) pts.push({ lat, lon });
+    });
+    return pts;
+  }
+
+  // --- Persistenz (localStorage), damit Track + Brunnen einen Reload ohne Netz überstehen ---
+  const STORAGE_KEY = 'trinkbrunnen_state_v1';
+
+  function saveState() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        trackPoints, fountains: foundFountains,
+        radius: parseFloat(radiusInput.value) || 400,
+        fileName: currentFileName, savedAt: new Date().toISOString()
+      }));
+    } catch (err) {
+      console.warn('Konnte Zustand nicht speichern:', err);
+    }
+  }
+
+  function loadState() {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return false;
+    try {
+      const state = JSON.parse(raw);
+      if (!state.trackPoints || state.trackPoints.length === 0) return false;
+      trackPoints = state.trackPoints;
+      sampledPoints = downsample(trackPoints, 40);
+      currentFileName = state.fileName || null;
+      drawRoute();
+      if (state.radius) radiusInput.value = state.radius;
+      if (state.fountains && state.fountains.length > 0) {
+        foundFountains = state.fountains;
+        renderFountainMarkers(foundFountains);
+      }
+      searchBtn.disabled = false;
+      const savedDate = state.savedAt ? new Date(state.savedAt).toLocaleString('de-DE') : '';
+      setStatus(`Gespeicherter Track wiederhergestellt (${currentFileName || 'ohne Namen'}, ${trackPoints.length} Punkte, gespeichert ${savedDate}). Funktioniert offline.`);
+      return true;
+    } catch (err) {
+      console.warn('Konnte gespeicherten Zustand nicht laden:', err);
+      return false;
+    }
+  }
+
+  function drawRoute() {
+    if (routeLayer) map.removeLayer(routeLayer);
+    const latlngs = trackPoints.map(p => [p.lat, p.lon]);
+    routeLayer = L.polyline(latlngs, { color: '#e53935', weight: 4 }).addTo(map);
+    map.fitBounds(routeLayer.getBounds(), { padding: [30, 30] });
+  }
+
+  function renderFountainMarkers(list) {
+    fountainLayer.clearLayers();
+    list.forEach(f => {
+      const marker = L.circleMarker([f.lat, f.lon], {
+        radius: 7, color: '#fff', weight: 2, fillColor: '#1e88e5', fillOpacity: 1
+      }).addTo(fountainLayer);
+      marker.bindPopup(
+        `<b>${f.name}</b><br>` +
+        `<a href="https://www.openstreetmap.org/node/${f.id}" target="_blank" rel="noopener">auf OSM ansehen</a>`
+      );
+    });
+  }
+
+  let currentFileName = null;
+
+  gpxInput.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      trackPoints = parseGPX(text);
+      if (trackPoints.length === 0) {
+        setStatus('Keine Track-Punkte in der GPX-Datei gefunden.');
+        return;
+      }
+      sampledPoints = downsample(trackPoints, 40); // alle ~40m ein Referenzpunkt
+      currentFileName = file.name;
+      foundFountains = [];
+      fountainLayer.clearLayers();
+      drawRoute();
+
+      searchBtn.disabled = false;
+      setStatus(`Track geladen: ${trackPoints.length} Punkte, ${sampledPoints.length} Stützpunkte für Korridor-Suche.`);
+      saveState();
+    } catch (err) {
+      setStatus('Fehler beim Einlesen: ' + err.message);
+    }
+  });
+
+  async function searchFountains() {
+    if (sampledPoints.length === 0) return;
+    const radius = parseFloat(radiusInput.value) || 400;
+    searchBtn.disabled = true;
+    setStatus('Suche Trinkbrunnen über Overpass API…');
+    fountainLayer.clearLayers();
+    foundFountains = [];
+
+    const lats = trackPoints.map(p => p.lat);
+    const lons = trackPoints.map(p => p.lon);
+    const pad = (radius + 200) / 111000; // grobe Umrechnung Meter -> Grad
+    const south = Math.min(...lats) - pad;
+    const north = Math.max(...lats) + pad;
+    const west = Math.min(...lons) - pad;
+    const east = Math.max(...lons) + pad;
+
+    const query = `[out:json][timeout:25];
+      node["amenity"="drinking_water"](${south},${west},${north},${east});
+      out body;`;
+
+    try {
+      const resp = await fetch('https://overpass-api.de/api/interpreter', {
+        method: 'POST',
+        body: query
+      });
+      if (!resp.ok) throw new Error('Overpass-Anfrage fehlgeschlagen (' + resp.status + ')');
+      const data = await resp.json();
+      const nodes = data.elements || [];
+
+      nodes.forEach(n => {
+        const d = minDistToRoute(n.lat, n.lon, sampledPoints);
+        if (d <= radius) {
+          const name = (n.tags && (n.tags.name || n.tags.description)) || 'Trinkbrunnen';
+          foundFountains.push({ lat: n.lat, lon: n.lon, name, id: n.id });
+        }
+      });
+      renderFountainMarkers(foundFountains);
+
+      setStatus(`${nodes.length} Brunnen in der Bounding Box, ${foundFountains.length} davon im ${radius}m-Korridor um die Route. Für die Fahrt gespeichert — funktioniert jetzt auch offline.`);
+      saveState();
+    } catch (err) {
+      setStatus('Fehler bei der Suche: ' + err.message + (foundFountains.length ? ' (alte Brunnen-Daten bleiben erhalten)' : ''));
+    } finally {
+      searchBtn.disabled = false;
+    }
+  }
+
+  searchBtn.addEventListener('click', searchFountains);
+
+  // --- Live-Standort ---
+  function nearestFountain(lat, lon) {
+    let best = null;
+    let bestDist = Infinity;
+    for (const f of foundFountains) {
+      const d = haversine(lat, lon, f.lat, f.lon);
+      if (d < bestDist) { bestDist = d; best = f; }
+    }
+    return best ? { fountain: best, dist: bestDist } : null;
+  }
+
+  function formatDist(m) {
+    return m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(1)} km`;
+  }
+
+  function updateLiveInfo(lat, lon) {
+    const coordsLine = `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+    if (foundFountains.length === 0) {
+      liveInfoEl.innerHTML = `Kein Brunnen-Datensatz geladen — erst "Brunnen suchen" ausführen.<div class="coords">${coordsLine}</div>`;
+      return;
+    }
+    const nearest = nearestFountain(lat, lon);
+    liveInfoEl.innerHTML = `🚰 Nächster Brunnen: ${formatDist(nearest.dist)} — ${nearest.fountain.name}<div class="coords">${coordsLine}</div>`;
+  }
+
+  locateBtn.addEventListener('click', () => {
+    if (watchId !== null) {
+      navigator.geolocation.clearWatch(watchId);
+      watchId = null;
+      locateBtn.classList.remove('active');
+      if (userMarker) { map.removeLayer(userMarker); userMarker = null; }
+      liveInfoEl.classList.remove('visible');
+      setStatus('Standort-Tracking gestoppt.');
+      return;
+    }
+    if (!navigator.geolocation) {
+      setStatus('Geolocation wird von diesem Browser nicht unterstützt.');
+      return;
+    }
+    locateBtn.classList.add('active');
+    liveInfoEl.classList.add('visible');
+    watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        const { latitude, longitude } = pos.coords;
+        if (!userMarker) {
+          userMarker = L.circleMarker([latitude, longitude], {
+            radius: 8, color: '#fff', weight: 2, fillColor: '#e53935', fillOpacity: 1
+          }).addTo(map);
+          map.panTo([latitude, longitude]);
+        } else {
+          userMarker.setLatLng([latitude, longitude]);
+        }
+        updateLiveInfo(latitude, longitude);
+      },
+      (err) => setStatus('Standortfehler: ' + err.message),
+      { enableHighAccuracy: true, maximumAge: 5000 }
+    );
+  });
+
+  // --- Start ---
+  loadState();
+
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch(err => {
+      console.warn('Service Worker konnte nicht registriert werden:', err);
+    });
+  }
+</script>
+</body>
+</html>
