@@ -264,16 +264,18 @@
     map.fitBounds(routeLayer.getBounds(), { padding: [30, 30] });
   }
 
-  function renderFountainMarkers(list) {
+  function renderFountainMarkers(list, autoOpenPopups) {
     fountainLayer.clearLayers();
     list.forEach(f => {
       const marker = L.circleMarker([f.lat, f.lon], {
-        radius: 7, color: '#fff', weight: 2, fillColor: '#1e88e5', fillOpacity: 1
+        radius: 10, color: '#fff', weight: 3, fillColor: '#1e88e5', fillOpacity: 1
       }).addTo(fountainLayer);
       marker.bindPopup(
         `<b>${f.name}</b><br>` +
         `<a href="https://www.openstreetmap.org/node/${f.id}" target="_blank" rel="noopener">auf OSM ansehen</a>`
       );
+      // Bei wenigen Treffern (z.B. 1 von 9 im Korridor) sonst auf einer langen Route kaum zu sehen.
+      if (autoOpenPopups && list.length <= 3) marker.openPopup();
     });
   }
 
@@ -317,15 +319,19 @@
     for (let i = 0; i < OVERPASS_ENDPOINTS.length; i++) {
       const endpoint = OVERPASS_ENDPOINTS[i];
       for (let attempt = 1; attempt <= 2; attempt++) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 20000); // Server, das nicht antwortet, soll nicht ewig hängen
         try {
           const host = new URL(endpoint).hostname;
           setStatus(`Suche Trinkbrunnen über ${host}… (Versuch ${attempt}${i > 0 ? ', Ausweich-Server' : ''})`);
-          const resp = await fetch(endpoint, { method: 'POST', body: query });
+          const resp = await fetch(endpoint, { method: 'POST', body: query, signal: controller.signal });
           if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
           return await resp.json();
         } catch (err) {
-          lastErr = err;
+          lastErr = err.name === 'AbortError' ? new Error('Zeitüberschreitung (20s)') : err;
           if (attempt === 1) await new Promise(r => setTimeout(r, 1500));
+        } finally {
+          clearTimeout(timeoutId);
         }
       }
     }
@@ -363,7 +369,7 @@
           foundFountains.push({ lat: n.lat, lon: n.lon, name, id: n.id });
         }
       });
-      renderFountainMarkers(foundFountains);
+      renderFountainMarkers(foundFountains, true);
 
       setStatus(`${nodes.length} Brunnen in der Bounding Box, ${foundFountains.length} davon im ${radius}m-Korridor um die Route. Für die Fahrt gespeichert — funktioniert jetzt auch offline.`);
       fountainsFromRoute = true;
