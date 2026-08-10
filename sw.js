@@ -1,10 +1,14 @@
-const CACHE_NAME = 'trinkbrunnen-v10';
+const CACHE_NAME = 'trinkbrunnen-v11';
 const APP_SHELL = [
   './',
   './index.html',
   './vendor/leaflet/leaflet.js',
   './vendor/leaflet/leaflet.css',
-  './manifest.json'
+  './manifest.json',
+  './icons/apple-touch-icon.png',
+  './icons/favicon-32.png',
+  './icons/icon-192.png',
+  './icons/icon-512.png'
 ];
 
 self.addEventListener('install', (event) => {
