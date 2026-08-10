@@ -529,16 +529,24 @@
       const name = `${escapeXML(e.f.name)}${offsetLabel}${nextLabel}`;
       return `  <wpt lat="${e.point.lat}" lon="${e.point.lon}">
     <name>${name}</name>
+    <desc></desc>
     <sym>Water Source</sym>
-    <type>Water</type>
+    <type>Water Source</type>
   </wpt>`;
     }).join('\n');
 
+    // Format an ein GPX angelehnt, das nachweislich funktioniert (Strava-Export
+    // mit custom Waypoint, über Strava<->Wahoo-Sync korrekt auf dem Ace gezeigt):
+    // xsi:schemaLocation gesetzt, <type> identisch zu <sym> ("Water Source").
     return `<?xml version="1.0" encoding="UTF-8"?>
-<gpx version="1.1" creator="Trinkbrunnen-Finder" xmlns="http://www.topografix.com/GPX/1/1">
+<gpx creator="Trinkbrunnen-Finder" version="1.1" xmlns="http://www.topografix.com/GPX/1/1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">
+ <metadata>
+  <name>${escapeXML(currentFileName || 'Route')}</name>
+ </metadata>
 ${wpts}
   <trk>
     <name>${escapeXML(currentFileName || 'Route')} (mit Trinkbrunnen)</name>
+    <type>cycling</type>
     <trkseg>
 ${trkpts}
     </trkseg>
