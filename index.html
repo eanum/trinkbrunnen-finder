@@ -365,8 +365,15 @@
     const west = Math.min(...lons) - pad;
     const east = Math.max(...lons) + pad;
 
+    // Neben amenity=drinking_water auch verwandte OSM-Tags fuer Trinkwasser
+    // beruecksichtigen (siehe OSM-Wiki) - erhoeht die Trefferzahl deutlich.
     const query = `[out:json][timeout:25];
-      node["amenity"="drinking_water"](${south},${west},${north},${east});
+      (
+        node["amenity"="drinking_water"](${south},${west},${north},${east});
+        node["man_made"="water_tap"](${south},${west},${north},${east});
+        node["man_made"="drinking_fountain"](${south},${west},${north},${east});
+        node["drinking_water"="yes"](${south},${west},${north},${east});
+      );
       out body;`;
 
     try {
@@ -439,7 +446,12 @@
       const radiusKm = parseFloat(nearbyRadiusInput.value) || 10;
       const radiusM = Math.round(radiusKm * 1000);
       const query = `[out:json][timeout:25];
-        node["amenity"="drinking_water"](around:${radiusM},${lat},${lon});
+        (
+          node["amenity"="drinking_water"](around:${radiusM},${lat},${lon});
+          node["man_made"="water_tap"](around:${radiusM},${lat},${lon});
+          node["man_made"="drinking_fountain"](around:${radiusM},${lat},${lon});
+          node["drinking_water"="yes"](around:${radiusM},${lat},${lon});
+        );
         out body;`;
 
       const data = await fetchOverpass(query);
