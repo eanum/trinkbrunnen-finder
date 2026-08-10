@@ -508,11 +508,11 @@
   }
 
   function trkptXML(p, indent) {
-    const extra = [];
-    if (p.ele !== undefined) extra.push(`${indent}  <ele>${p.ele}</ele>`);
-    if (p.time !== undefined) extra.push(`${indent}  <time>${p.time}</time>`);
-    if (extra.length === 0) return `${indent}<trkpt lat="${p.lat}" lon="${p.lon}"></trkpt>`;
-    return `${indent}<trkpt lat="${p.lat}" lon="${p.lon}">\n${extra.join('\n')}\n${indent}</trkpt>`;
+    // <ele> bleibt fuer die Hoehenanzeige auf dem Geraet erhalten, <time> wird
+    // bewusst weggelassen (wird nicht gebraucht, war fuer die Wegpunkt-Anzeige
+    // nicht ausschlaggebend - der eigentliche Trick war der direkte Datei-Import).
+    if (p.ele === undefined) return `${indent}<trkpt lat="${p.lat}" lon="${p.lon}"></trkpt>`;
+    return `${indent}<trkpt lat="${p.lat}" lon="${p.lon}">\n${indent}  <ele>${p.ele}</ele>\n${indent}</trkpt>`;
   }
 
   function buildGPX() {
