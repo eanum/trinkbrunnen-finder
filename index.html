@@ -182,7 +182,13 @@
     trkpts.forEach(el => {
       const lat = parseFloat(el.getAttribute('lat'));
       const lon = parseFloat(el.getAttribute('lon'));
-      if (!isNaN(lat) && !isNaN(lon)) pts.push({ lat, lon });
+      if (isNaN(lat) || isNaN(lon)) return;
+      const p = { lat, lon };
+      const eleEl = el.querySelector('ele');
+      if (eleEl && eleEl.textContent.trim() !== '') p.ele = eleEl.textContent.trim();
+      const timeEl = el.querySelector('time');
+      if (timeEl && timeEl.textContent.trim() !== '') p.time = timeEl.textContent.trim();
+      pts.push(p);
     });
     return pts;
   }
@@ -501,8 +507,16 @@
     return cum;
   }
 
+  function trkptXML(p, indent) {
+    const extra = [];
+    if (p.ele !== undefined) extra.push(`${indent}  <ele>${p.ele}</ele>`);
+    if (p.time !== undefined) extra.push(`${indent}  <time>${p.time}</time>`);
+    if (extra.length === 0) return `${indent}<trkpt lat="${p.lat}" lon="${p.lon}"></trkpt>`;
+    return `${indent}<trkpt lat="${p.lat}" lon="${p.lon}">\n${extra.join('\n')}\n${indent}</trkpt>`;
+  }
+
   function buildGPX() {
-    const trkpts = trackPoints.map(p => `      <trkpt lat="${p.lat}" lon="${p.lon}"></trkpt>`).join('\n');
+    const trkpts = trackPoints.map(p => trkptXML(p, '      ')).join('\n');
 
     // Wahoo-Geräte zeigen Wegpunkte laut Support-Doku nur an, wenn sie exakt
     // auf dem Track liegen -> auf den nächsten Trackpunkt snappen. Zusätzlich
@@ -527,9 +541,10 @@
         if (distToEnd >= 15) nextLabel = ` – noch ${formatDist(distToEnd)} bis ins Ziel`;
       }
       const name = `${escapeXML(e.f.name)}${offsetLabel}${nextLabel}`;
+      const eleLine = e.point.ele !== undefined ? `\n    <ele>${e.point.ele}</ele>` : '';
       return `  <wpt lat="${e.point.lat}" lon="${e.point.lon}">
     <name>${name}</name>
-    <desc></desc>
+    <desc></desc>${eleLine}
     <sym>Water Source</sym>
     <type>Water Source</type>
   </wpt>`;
@@ -537,11 +552,16 @@
 
     // Format an ein GPX angelehnt, das nachweislich funktioniert (Strava-Export
     // mit custom Waypoint, über Strava<->Wahoo-Sync korrekt auf dem Ace gezeigt):
-    // xsi:schemaLocation gesetzt, <type> identisch zu <sym> ("Water Source").
+    // xsi:schemaLocation gesetzt, <type> identisch zu <sym> ("Water Source"),
+    // <ele>/<time> je Trackpunkt uebernommen (falls in der Quelldatei vorhanden).
     return `<?xml version="1.0" encoding="UTF-8"?>
 <gpx creator="Trinkbrunnen-Finder" version="1.1" xmlns="http://www.topografix.com/GPX/1/1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">
  <metadata>
   <name>${escapeXML(currentFileName || 'Route')}</name>
+  <copyright author="OpenStreetMap contributors">
+   <year>${new Date().getFullYear()}</year>
+   <license>https://www.openstreetmap.org/copyright</license>
+  </copyright>
  </metadata>
 ${wpts}
   <trk>
