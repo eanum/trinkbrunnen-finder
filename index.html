@@ -34,6 +34,9 @@
   }
   #controls label { font-size: 12px; display: flex; align-items: center; gap: 4px; }
   #controls .sep { width: 1px; align-self: stretch; background: rgba(255,255,255,0.2); margin: 0 16px; }
+  .filterlabel { color: rgba(255,255,255,0.7); font-size: 12px; }
+  .checklabel { font-size: 12px; display: flex; align-items: center; gap: 4px; cursor: pointer; }
+  .checklabel input { cursor: pointer; }
   #controls input[type=number] { width: 55px; padding: 4px; border-radius: 4px; border: none; }
   #controls button, #controls .filebtn {
     background: #2e7d5b;
@@ -114,6 +117,11 @@
     </label>
     <button id="nearbyBtn">🚰 Umkreissuche</button>
     <button id="locateBtn">📍 Mein Standort</button>
+    <span class="sep"></span>
+    <span class="filterlabel">Zeigen:</span>
+    <label class="checklabel"><input type="checkbox" id="catDrinkingWater" checked> 🚰 Trinkbrunnen</label>
+    <label class="checklabel"><input type="checkbox" id="catWaterTap" checked> 🚿 Wasserhahn</label>
+    <label class="checklabel" title="drinking_water=yes an anderen Orten, z.B. Toiletten, Tankstellen, Gastronomie"><input type="checkbox" id="catOther"> 🚻 Sonstige</label>
   </div>
   <div id="status"></div>
   <div id="liveInfo"></div>
@@ -146,11 +154,46 @@
   let routeLayer = null;
   let directionLayer = L.layerGroup().addTo(map); // Start/Ziel-Marker + Richtungspfeile
   let fountainLayer = L.layerGroup().addTo(map);
-  let foundFountains = []; // [{lat, lon, name, id}] aus der letzten Suche
+  let foundFountains = []; // [{lat, lon, name, id, category}] - nach Kategorie-Filter, das was aktiv angezeigt/genutzt wird
+  let allFoundNodes = [];  // dieselbe Liste, aber ungefiltert (alle Kategorien) - Basis fuer den Filter
   let searchRadiusCircle = null; // zeigt den durchsuchten Umkreis bei der Nähe-Suche
   let searchPerformed = false; // unterscheidet "noch nicht gesucht" von "gesucht, 0 Treffer"
+  let lastSearchWasRoute = false; // fuer Status-Text/Export-Button beim Kategorie-Umschalten
   let userMarker = null;
   let watchId = null;
+
+  // --- Kategorie-Filter ---
+  const catDrinkingWaterEl = document.getElementById('catDrinkingWater');
+  const catWaterTapEl = document.getElementById('catWaterTap');
+  const catOtherEl = document.getElementById('catOther');
+
+  function categorize(tags) {
+    if (!tags) return 'other';
+    if (tags.amenity === 'drinking_water' || tags.man_made === 'drinking_fountain') return 'drinking_water';
+    if (tags.man_made === 'water_tap') return 'water_tap';
+    return 'other';
+  }
+
+  function categoryEnabled(cat) {
+    if (cat === 'drinking_water') return catDrinkingWaterEl.checked;
+    if (cat === 'water_tap') return catWaterTapEl.checked;
+    return catOtherEl.checked;
+  }
+
+  function applyCategoryFilter() {
+    foundFountains = allFoundNodes.filter(f => categoryEnabled(f.category));
+    renderFountainMarkers(foundFountains);
+    if (lastSearchWasRoute) exportBtn.disabled = foundFountains.length === 0;
+    if (userMarker && liveInfoEl.classList.contains('visible')) {
+      const ll = userMarker.getLatLng();
+      updateLiveInfo(ll.lat, ll.lng);
+    }
+    saveState();
+  }
+
+  [catDrinkingWaterEl, catWaterTapEl, catOtherEl].forEach(el => {
+    el.addEventListener('change', () => { if (searchPerformed) applyCategoryFilter(); });
+  });
 
   // --- Geometrie-Helfer ---
   function haversine(lat1, lon1, lat2, lon2) {
@@ -224,7 +267,12 @@
   function saveState() {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        trackPoints, fountains: foundFountains, fountainsFromRoute,
+        trackPoints, allFoundNodes, fountainsFromRoute, lastSearchWasRoute,
+        categoryFilter: {
+          drinking_water: catDrinkingWaterEl.checked,
+          water_tap: catWaterTapEl.checked,
+          other: catOtherEl.checked
+        },
         radius: parseFloat(radiusInput.value) || 400,
         fileName: currentFileName, savedAt: new Date().toISOString()
       }));
@@ -239,7 +287,10 @@
     try {
       const state = JSON.parse(raw);
       const hasTrack = state.trackPoints && state.trackPoints.length > 0;
-      const hasFountains = state.fountains && state.fountains.length > 0;
+      // Abwaertskompatibel zu vor der Kategorie-Filter-Funktion: alte Speicherungen
+      // hatten "fountains" statt "allFoundNodes", ohne category -> als drinking_water annehmen.
+      const rawNodes = state.allFoundNodes || state.fountains || [];
+      const hasFountains = rawNodes.length > 0;
       if (!hasTrack && !hasFountains) return false;
 
       if (hasTrack) {
@@ -250,13 +301,20 @@
         searchBtn.disabled = false;
       }
       if (state.radius) radiusInput.value = state.radius;
+      if (state.categoryFilter) {
+        catDrinkingWaterEl.checked = state.categoryFilter.drinking_water !== false;
+        catWaterTapEl.checked = state.categoryFilter.water_tap !== false;
+        catOtherEl.checked = !!state.categoryFilter.other;
+      }
       if (hasFountains) {
-        foundFountains = state.fountains;
+        allFoundNodes = rawNodes.map(f => ({ ...f, category: f.category || 'drinking_water' }));
+        foundFountains = allFoundNodes.filter(f => categoryEnabled(f.category));
         renderFountainMarkers(foundFountains);
         fountainsFromRoute = !!state.fountainsFromRoute;
+        lastSearchWasRoute = state.lastSearchWasRoute !== undefined ? !!state.lastSearchWasRoute : hasTrack;
         searchPerformed = true;
-        exportBtn.disabled = !(hasTrack && fountainsFromRoute);
-        if (!hasTrack) map.fitBounds(L.latLngBounds(foundFountains.map(f => [f.lat, f.lon])), { padding: [30, 30] });
+        exportBtn.disabled = !(hasTrack && fountainsFromRoute && foundFountains.length > 0);
+        if (!hasTrack && foundFountains.length > 0) map.fitBounds(L.latLngBounds(foundFountains.map(f => [f.lat, f.lon])), { padding: [30, 30] });
       }
       clearBtn.disabled = false;
       const savedDate = state.savedAt ? new Date(state.savedAt).toLocaleString('de-DE') : '';
@@ -274,7 +332,9 @@
     trackPoints = [];
     sampledPoints = [];
     foundFountains = [];
+    allFoundNodes = [];
     fountainsFromRoute = false;
+    lastSearchWasRoute = false;
     searchPerformed = false;
     currentFileName = null;
     if (routeLayer) { map.removeLayer(routeLayer); routeLayer = null; }
@@ -439,18 +499,21 @@
       const data = await fetchOverpass(query);
       const nodes = data.elements || [];
 
+      allFoundNodes = [];
       nodes.forEach(n => {
         const d = minDistToRoute(n.lat, n.lon, sampledPoints);
         if (d <= radius) {
           const name = (n.tags && (n.tags.name || n.tags.description)) || 'Trinkbrunnen';
-          foundFountains.push({ lat: n.lat, lon: n.lon, name, id: n.id });
+          allFoundNodes.push({ lat: n.lat, lon: n.lon, name, id: n.id, category: categorize(n.tags) });
         }
       });
+      foundFountains = allFoundNodes.filter(f => categoryEnabled(f.category));
       renderFountainMarkers(foundFountains, true);
 
-      setStatus(`${nodes.length} Brunnen in der Bounding Box, ${foundFountains.length} davon im ${radius}m-Korridor um die Route. Für die Fahrt gespeichert — funktioniert jetzt auch offline.`);
+      setStatus(`${nodes.length} Brunnen in der Bounding Box, ${allFoundNodes.length} davon im ${radius}m-Korridor um die Route (${foundFountains.length} nach Kategorie-Filter angezeigt). Für die Fahrt gespeichert — funktioniert jetzt auch offline.`);
       fountainsFromRoute = true;
       searchPerformed = true;
+      lastSearchWasRoute = true;
       exportBtn.disabled = foundFountains.length === 0;
       saveState();
     } catch (err) {
@@ -515,12 +578,15 @@
 
       const data = await fetchOverpass(query);
       const nodes = data.elements || [];
-      foundFountains = nodes.map(n => ({
+      allFoundNodes = nodes.map(n => ({
         lat: n.lat, lon: n.lon, id: n.id,
-        name: (n.tags && (n.tags.name || n.tags.description)) || 'Trinkbrunnen'
+        name: (n.tags && (n.tags.name || n.tags.description)) || 'Trinkbrunnen',
+        category: categorize(n.tags)
       }));
+      foundFountains = allFoundNodes.filter(f => categoryEnabled(f.category));
       fountainsFromRoute = false;
       searchPerformed = true;
+      lastSearchWasRoute = false;
       exportBtn.disabled = true; // diese Brunnen gehören zu keiner geladenen Route
       clearBtn.disabled = false;
       renderFountainMarkers(foundFountains);
@@ -536,10 +602,14 @@
         map.fitBounds(searchRadiusCircle.getBounds(), { padding: [30, 30] });
       }
 
-      if (foundFountains.length === 0) {
+      const hiddenCount = allFoundNodes.length - foundFountains.length;
+      const hiddenNote = hiddenCount > 0 ? ` (+${hiddenCount} durch Kategorie-Filter ausgeblendet)` : '';
+      if (foundFountains.length === 0 && allFoundNodes.length === 0) {
         setStatus(`Kein Trinkbrunnen im ${radiusKm} km Umkreis gefunden (OSM-Daten können lückenhaft sein — der blaue Kreis zeigt den durchsuchten Bereich). Größeren Umkreis probieren?`);
+      } else if (foundFountains.length === 0) {
+        setStatus(`0 sichtbar im ${radiusKm} km Umkreis${hiddenNote} — evtl. "Sonstige" mit aktivieren.`);
       } else {
-        setStatus(`${foundFountains.length} Brunnen im ${radiusKm} km Umkreis um deinen Standort gefunden.`);
+        setStatus(`${foundFountains.length} Brunnen im ${radiusKm} km Umkreis um deinen Standort gefunden${hiddenNote}.`);
       }
       liveInfoEl.classList.add('visible');
       updateLiveInfo(lat, lon);
