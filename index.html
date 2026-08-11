@@ -660,6 +660,16 @@
     })[c]);
   }
 
+  // Wahoo ACE stellt Umlaute auf dem Display nicht dar (zeigt Luecken/nichts an)
+  // -> fuer Wegpunkt-Namen im GPX-Export auf ASCII transliterieren.
+  function toAsciiDE(s) {
+    return String(s)
+      .replace(/ä/g, 'ae').replace(/Ä/g, 'Ae')
+      .replace(/ö/g, 'oe').replace(/Ö/g, 'Oe')
+      .replace(/ü/g, 'ue').replace(/Ü/g, 'Ue')
+      .replace(/ß/g, 'ss');
+  }
+
   function nearestTrackPointIndex(lat, lon) {
     let bestIdx = 0;
     let bestDist = Infinity;
@@ -701,17 +711,19 @@
       })
       .sort((a, b) => a.idx - b.idx);
 
+    // Kurz halten: Wahoo ACE schneidet lange Wegpunkt-Namen auf dem Display ab.
     const wpts = enriched.map((e, i) => {
-      const offsetLabel = e.dist >= 15 ? ` (ca. ${formatDist(e.dist)} abseits der Route)` : '';
-      let nextLabel = '';
+      const base = e.f.name === 'Trinkbrunnen' ? 'Brunnen' : e.f.name;
+      let label = base;
+      if (e.dist >= 15) label += ` ca.${formatDist(e.dist)}`;
       if (i < enriched.length - 1) {
         const distToNext = Math.abs(cum[enriched[i + 1].idx] - cum[e.idx]);
-        nextLabel = ` – nächstes Wasser in ${formatDist(distToNext)}`;
+        label += `, naechster in ${formatDist(distToNext)}`;
       } else {
         const distToEnd = Math.abs(cum[cum.length - 1] - cum[e.idx]);
-        if (distToEnd >= 15) nextLabel = ` – noch ${formatDist(distToEnd)} bis ins Ziel`;
+        if (distToEnd >= 15) label += `, noch ${formatDist(distToEnd)} bis Ziel`;
       }
-      const name = `${escapeXML(e.f.name)}${offsetLabel}${nextLabel}`;
+      const name = toAsciiDE(escapeXML(label));
       const eleLine = e.point.ele !== undefined ? `\n    <ele>${e.point.ele}</ele>` : '';
       return `  <wpt lat="${e.point.lat}" lon="${e.point.lon}">
     <name>${name}</name>
