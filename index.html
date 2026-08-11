@@ -704,12 +704,29 @@
     // pro Brunnen die Streckendistanz (nicht Luftlinie) zum nächsten Brunnen
     // in Fahrtrichtung ausrechnen ("nächstes Wasser in Xkm", Tankstellen-Prinzip).
     const cum = trackCumulativeDistances();
-    const enriched = foundFountains
+    let enriched = foundFountains
       .map(f => {
         const { idx, dist } = nearestTrackPointIndex(f.lat, f.lon);
         return { f, idx, dist, point: trackPoints[idx] };
       })
       .sort((a, b) => a.idx - b.idx);
+
+    // Bei einem breiten Korridor koennen mehrere, teils weit auseinanderliegende
+    // Brunnen auf denselben naechsten Trackpunkt einschnappen (v.a. an Schleifen-
+    // Zielen, wo der Track auf engem Raum endet) -> Duplikate zusammenfassen,
+    // nur den mit dem kleinsten Versatz behalten.
+    {
+      const deduped = [];
+      for (const e of enriched) {
+        const last = deduped[deduped.length - 1];
+        if (last && last.idx === e.idx) {
+          if (e.dist < last.dist) deduped[deduped.length - 1] = e;
+        } else {
+          deduped.push(e);
+        }
+      }
+      enriched = deduped;
+    }
 
     // Kurz halten: Wahoo ACE schneidet lange Wegpunkt-Namen auf dem Display ab.
     const wpts = enriched.map((e, i) => {
