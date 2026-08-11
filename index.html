@@ -23,7 +23,7 @@
     color: #fff;
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: 10px 16px;
     align-items: center;
     z-index: 1000;
   }
@@ -32,8 +32,13 @@
     margin: 0 8px 0 0;
     white-space: nowrap;
   }
+  .ctrl-group {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+  }
   #controls label { font-size: 12px; display: flex; align-items: center; gap: 4px; }
-  #controls .sep { width: 1px; align-self: stretch; background: rgba(255,255,255,0.2); margin: 0 16px; }
   .filterlabel { color: rgba(255,255,255,0.7); font-size: 12px; }
   .checklabel { font-size: 12px; display: flex; align-items: center; gap: 4px; cursor: pointer; }
   .checklabel input { cursor: pointer; }
@@ -46,9 +51,24 @@
     padding: 8px 12px;
     font-size: 13px;
     cursor: pointer;
+    white-space: nowrap;
+    text-align: center;
   }
   #controls button:disabled { background: #4a6157; cursor: not-allowed; }
   #controls input[type=file] { display: none; }
+
+  /* Mobile: Gruppen sauber untereinander statt wild umbrechend */
+  @media (max-width: 720px) {
+    #controls { flex-direction: column; align-items: stretch; }
+    .ctrl-group {
+      width: 100%;
+      padding-bottom: 10px;
+      border-bottom: 1px solid rgba(255,255,255,0.15);
+    }
+    .ctrl-group:last-child { border-bottom: none; padding-bottom: 0; }
+    .ctrl-group button, .ctrl-group .filebtn { flex: 1 1 auto; }
+    .ctrl-group label:not(.checklabel) { flex: 1 1 auto; }
+  }
   #status {
     font-size: 12px;
     padding: 4px 12px;
@@ -101,27 +121,37 @@
 <div id="app">
   <div id="controls">
     <h1>💧 Trinkbrunnen-Finder</h1>
-    <label class="filebtn">
-      GPX laden
-      <input type="file" id="gpxInput" accept=".gpx" />
-    </label>
-    <button id="clearBtn" disabled title="Route und Brunnen-Daten zurücksetzen">🗑️ Zurücksetzen</button>
-    <button id="searchBtn" disabled title="Erst eine GPX-Datei laden">Brunnen im Track suchen</button>
-    <label>Korridor (m)
-      <input type="number" id="radius" value="400" min="50" max="2000" step="50">
-    </label>
-    <button id="exportBtn" disabled title="Erst Brunnen entlang der Route suchen">⬇️ GPX mit Brunnen</button>
-    <span class="sep"></span>
-    <label>Umkreis (km)
-      <input type="number" id="nearbyRadius" value="10" min="1" max="50" step="1">
-    </label>
-    <button id="nearbyBtn">🚰 Umkreissuche</button>
-    <button id="locateBtn">📍 Mein Standort</button>
-    <span class="sep"></span>
-    <span class="filterlabel">Zeigen:</span>
-    <label class="checklabel"><input type="checkbox" id="catDrinkingWater" checked> 🚰 Trinkbrunnen</label>
-    <label class="checklabel"><input type="checkbox" id="catWaterTap" checked> 🚿 Wasserhahn</label>
-    <label class="checklabel" title="z.B. Toiletten, Tankstellen, Gastronomie mit Wasser"><input type="checkbox" id="catOther"> 🚻 Sonstige (z.B. Toiletten)</label>
+
+    <div class="ctrl-group">
+      <label class="filebtn">
+        GPX laden
+        <input type="file" id="gpxInput" accept=".gpx" />
+      </label>
+      <button id="clearBtn" disabled title="Route und Brunnen-Daten zurücksetzen">🗑️ Zurücksetzen</button>
+    </div>
+
+    <div class="ctrl-group">
+      <button id="searchBtn" disabled title="Erst eine GPX-Datei laden">Brunnen im Track suchen</button>
+      <label>Korridor (m)
+        <input type="number" id="radius" value="400" min="50" max="2000" step="50">
+      </label>
+      <button id="exportBtn" disabled title="Erst Brunnen entlang der Route suchen">⬇️ GPX mit Brunnen</button>
+    </div>
+
+    <div class="ctrl-group">
+      <label>Umkreis (km)
+        <input type="number" id="nearbyRadius" value="10" min="1" max="50" step="1">
+      </label>
+      <button id="nearbyBtn">🚰 Umkreissuche</button>
+      <button id="locateBtn">📍 Mein Standort</button>
+    </div>
+
+    <div class="ctrl-group filter-group">
+      <span class="filterlabel">Zeigen:</span>
+      <label class="checklabel"><input type="checkbox" id="catDrinkingWater" checked> 🚰 Trinkbrunnen</label>
+      <label class="checklabel"><input type="checkbox" id="catWaterTap" checked> 🚿 Wasserhahn</label>
+      <label class="checklabel" title="z.B. Toiletten, Tankstellen, Gastronomie mit Wasser"><input type="checkbox" id="catOther"> 🚻 Sonstige (z.B. Toiletten)</label>
+    </div>
   </div>
   <div id="status"></div>
   <div id="liveInfo"></div>
