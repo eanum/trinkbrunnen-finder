@@ -426,12 +426,23 @@
 
   function renderFountainMarkers(list, autoOpenPopups) {
     fountainLayer.clearLayers();
+    // Streckenkilometer je Brunnen anzeigen (nur wenn eine Route geladen ist,
+    // bei der Umkreissuche ohne Track gibt es keine sinnvolle "km X"-Angabe).
+    const hasTrack = trackPoints.length > 0 && fountainsFromRoute;
+    const cum = hasTrack ? trackCumulativeDistances() : null;
+
     list.forEach(f => {
       const marker = L.circleMarker([f.lat, f.lon], {
         radius: 10, color: '#fff', weight: 3, fillColor: '#1e88e5', fillOpacity: 1
       }).addTo(fountainLayer);
+      let kmLine = '';
+      if (hasTrack) {
+        const { idx } = nearestTrackPointIndex(f.lat, f.lon);
+        const km = (cum[idx] / 1000).toFixed(1);
+        kmLine = `bei km ${km}<br>`;
+      }
       marker.bindPopup(
-        `<b>${f.name}</b><br>` +
+        `<b>${f.name}</b><br>${kmLine}` +
         `<a href="https://www.openstreetmap.org/node/${f.id}" target="_blank" rel="noopener">auf OSM ansehen</a>`
       );
       // Bei wenigen Treffern (z.B. 1 von 9 im Korridor) sonst auf einer langen Route kaum zu sehen.
