@@ -339,10 +339,10 @@
       if (hasFountains) {
         allFoundNodes = rawNodes.map(f => ({ ...f, category: f.category || 'drinking_water' }));
         foundFountains = allFoundNodes.filter(f => categoryEnabled(f.category));
-        renderFountainMarkers(foundFountains);
         fountainsFromRoute = !!state.fountainsFromRoute;
         lastSearchWasRoute = state.lastSearchWasRoute !== undefined ? !!state.lastSearchWasRoute : hasTrack;
         searchPerformed = true;
+        renderFountainMarkers(foundFountains);
         exportBtn.disabled = !(hasTrack && fountainsFromRoute && foundFountains.length > 0);
         if (!hasTrack && foundFountains.length > 0) map.fitBounds(L.latLngBounds(foundFountains.map(f => [f.lat, f.lon])), { padding: [30, 30] });
       }
