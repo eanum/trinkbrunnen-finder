@@ -480,33 +480,102 @@
     }
   });
 
+  // Die öffentlichen Overpass-Server sind zeitweise stark überlastet (Antworten
+  // nach 30-45 s, 500/502-Fehler). Deshalb: mehrere Server, zeitversetzt gestartet
+  // ("hedged requests"), langes Gesamt-Timeout, erste gültige Antwort gewinnt.
   const OVERPASS_ENDPOINTS = [
     'https://overpass-api.de/api/interpreter',
+    'https://lz4.overpass-api.de/api/interpreter',
     'https://overpass.kumi.systems/api/interpreter'
   ];
+  const OVERPASS_STAGGER_MS = 8000;   // nächsten Server erst starten, wenn der vorige nach 8 s noch schweigt
+  const OVERPASS_DEADLINE_MS = 90000; // Gesamtlimit pro Runde
+
+  function fetchOverpassRound(query) {
+    return new Promise((resolve, reject) => {
+      const started = Date.now();
+      const controllers = [];
+      const errors = [];
+      let finished = false;
+      let nextIdx = 0;
+      let pending = 0;
+      let staggerTimer = null;
+
+      const ticker = setInterval(() => {
+        const sec = Math.round((Date.now() - started) / 1000);
+        setStatus(`Suche Trinkbrunnen… ${sec} s` + (sec >= 10 ? ' – öffentlicher Overpass-Server ausgelastet, kann bis ca. 90 s dauern' : ''));
+      }, 1000);
+
+      const finish = (fn, value) => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(staggerTimer);
+        clearTimeout(deadlineTimer);
+        clearInterval(ticker);
+        controllers.forEach(c => c.abort());
+        fn(value);
+      };
+      const deadlineTimer = setTimeout(() => {
+        finish(reject, new Error('Zeitüberschreitung nach ' + OVERPASS_DEADLINE_MS / 1000 + ' s' + (errors.length ? ' (' + errors.join('; ') + ')' : '')));
+      }, OVERPASS_DEADLINE_MS);
+
+      const startNext = () => {
+        clearTimeout(staggerTimer);
+        if (finished || nextIdx >= OVERPASS_ENDPOINTS.length) return;
+        const endpoint = OVERPASS_ENDPOINTS[nextIdx++];
+        const host = new URL(endpoint).hostname;
+        const controller = new AbortController();
+        controllers.push(controller);
+        pending++;
+
+        fetch(endpoint, { method: 'POST', body: query, signal: controller.signal })
+          .then(async resp => {
+            if (!resp.ok) throw new Error(`${host}: HTTP ${resp.status}`);
+            const data = await resp.json();
+            // Overpass meldet Laufzeitfehler (Timeout, zu wenig Speicher) mit HTTP 200
+            // und leerem/abgeschnittenem Ergebnis - das darf nicht als "0 Brunnen" durchgehen.
+            if (data.remark && /runtime error|timed out|out of memory/i.test(data.remark)) {
+              throw new Error(`${host}: ${data.remark}`);
+            }
+            finish(resolve, data);
+          })
+          .catch(err => {
+            if (finished || err.name === 'AbortError') return;
+            errors.push(err.message || String(err));
+          })
+          .finally(() => {
+            pending--;
+            if (finished) return;
+            if (nextIdx < OVERPASS_ENDPOINTS.length) startNext(); // Server ausgefallen -> sofort den nächsten
+            else if (pending === 0) finish(reject, new Error(errors.join('; ') || 'keine Antwort'));
+          });
+
+        // Nächsten Server zeitversetzt nachschieben, falls dieser zu langsam ist.
+        if (nextIdx < OVERPASS_ENDPOINTS.length) staggerTimer = setTimeout(startNext, OVERPASS_STAGGER_MS);
+      };
+
+      startNext();
+    });
+  }
 
   async function fetchOverpass(query) {
-    let lastErr;
-    for (let i = 0; i < OVERPASS_ENDPOINTS.length; i++) {
-      const endpoint = OVERPASS_ENDPOINTS[i];
-      for (let attempt = 1; attempt <= 2; attempt++) {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 20000); // Server, das nicht antwortet, soll nicht ewig hängen
+    const t0 = Date.now();
+    try {
+      return await fetchOverpassRound(query);
+    } catch (err) {
+      // Scheiterten alle Server schnell (Fehler statt Langsamkeit), einmal nach kurzer Pause
+      // erneut versuchen (empfohlenes Backoff der Overpass-Betreiber).
+      if (Date.now() - t0 < 20000) {
+        setStatus('Overpass-Server melden Fehler – neuer Versuch in 5 s…');
+        await new Promise(r => setTimeout(r, 5000));
         try {
-          const host = new URL(endpoint).hostname;
-          setStatus(`Suche Trinkbrunnen über ${host}… (Versuch ${attempt}${i > 0 ? ', Ausweich-Server' : ''})`);
-          const resp = await fetch(endpoint, { method: 'POST', body: query, signal: controller.signal });
-          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-          return await resp.json();
-        } catch (err) {
-          lastErr = err.name === 'AbortError' ? new Error('Zeitüberschreitung (20s)') : err;
-          if (attempt === 1) await new Promise(r => setTimeout(r, 1500));
-        } finally {
-          clearTimeout(timeoutId);
+          return await fetchOverpassRound(query);
+        } catch (err2) {
+          throw new Error('Alle Overpass-Server nicht erreichbar oder ausgelastet (' + err2.message + '). In 1–2 Minuten erneut versuchen.');
         }
       }
+      throw new Error('Alle Overpass-Server nicht erreichbar oder ausgelastet (' + err.message + '). In 1–2 Minuten erneut versuchen.');
     }
-    throw new Error('Alle Overpass-Server nicht erreichbar (' + lastErr.message + ')');
   }
 
   async function searchFountains() {
